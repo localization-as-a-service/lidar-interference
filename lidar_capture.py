@@ -6,10 +6,22 @@ import numpy as np
 import pyrealsense2 as rs
 
 
-def camera_stream(out_dir):
+def camera_stream(out_dir, device_id, capture):
     camera_pipe = rs.pipeline()
     camera_config = rs.config()
     
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    for device in devices:
+        print(f"{device.get_info(rs.camera_info.name)}: {device.get_info(rs.camera_info.serial_number)}")
+        
+    # select the first device in the list
+    if device_id < len(devices):
+        camera_config.enable_device(devices[device_id].get_info(rs.camera_info.serial_number))
+    else:
+        print(f"Device {device_id} not found")
+        return
+        
     camera_config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     camera_config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
@@ -25,7 +37,7 @@ def camera_stream(out_dir):
         try:
             elapsed_t = time.time() - start_t
             
-            if elapsed_t > 20:
+            if elapsed_t > 20 and not capture:
                 break
             
             camera_frames: rs.composite_frame = camera_pipe.poll_for_frames()
@@ -44,21 +56,27 @@ def camera_stream(out_dir):
                 
                 fps = int(1 / (current_t - previous_t + 1) * 1e3)
                 previous_t = current_t
-
-                cv2.imwrite(os.path.join(out_dir, "frames", f"frame-{current_t}.color.png"), color_image)
-                cv2.imwrite(os.path.join(out_dir, "frames", f"frame-{current_t}.depth.png"), depth_image)
+                
+                if not capture:
+                    cv2.imwrite(os.path.join(out_dir, f"frame-{current_t}.color.png"), color_image)
+                    cv2.imwrite(os.path.join(out_dir, f"frame-{current_t}.depth.png"), depth_image)
                 
                 message = f"FPS: {fps:2d} | Elapsed Time: {elapsed_t:03.2f}s"
+                
+                color_image_copy = color_image.copy()
 
-                cv2.putText(color_image, message, (7, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (60, 76, 231), 2, cv2.LINE_AA)
+                cv2.putText(color_image_copy, message, (7, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (60, 76, 231), 2, cv2.LINE_AA)
                 cv2.namedWindow("Secondary View", cv2.WINDOW_AUTOSIZE)
-                cv2.imshow("Secondary View", color_image)
+                cv2.imshow("Secondary View", color_image_copy)
 
                 # To get key presses
                 key = cv2.waitKey(1)
 
                 if key in (27, ord("q")) or cv2.getWindowProperty("Secondary View", cv2.WND_PROP_AUTOSIZE) < 0:
                     break
+                elif key == ord("s") and capture:
+                    cv2.imwrite(os.path.join(out_dir, f"frame-{current_t}.color.png"), color_image)
+                    cv2.imwrite(os.path.join(out_dir, f"frame-{current_t}.depth.png"), depth_image)
                 
         except KeyboardInterrupt:
             break
@@ -73,11 +91,17 @@ if __name__ == '__main__':
     parser.add_argument("--trial", default=0, type=int)
     parser.add_argument("--subject", default=0, type=int)
     parser.add_argument("--sequence", default=0, type=int)
+    parser.add_argument("--device", default=0, type=int)
+    parser.add_argument("--capture", action="store_true")
+    parser.add_argument("--outdir", default="data/raw_data", type=str, required=False)
     args = parser.parse_args()
 
-    out_dir = f"data/raw_data/exp_{args.experiment}/trial_{args.trial}/secondary/subject-{args.subject}/{args.sequence:02d}"
+    if not args.capture:
+        out_dir = f"data/raw_data/exp_{args.experiment}/trial_{args.trial}/secondary/subject-{args.subject}/{args.sequence:02d}/frames"
+    else:
+        out_dir = args.outdir
+        
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
     
-    if not os.path.exists(os.path.join(out_dir, "frames")):
-        os.makedirs(os.path.join(out_dir, "frames"))
-            
-    camera_stream(out_dir)
+    camera_stream(out_dir, args.device, args.capture)
